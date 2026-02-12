@@ -7,6 +7,10 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   dry-run-test:
     name: "Dry Run Test"
@@ -15,7 +19,9 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 10
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -27,7 +33,33 @@ jobs:
         run: npm ci
 
       - name: Run Unit Tests
-        run: make test
+        run: |
+          go test -v -coverprofile=coverage.out ./src/...
+
+      - name: Go Coverage report
+        uses: gwatts/go-coverage-action@v2
+        id: coverage
+        with:
+          coverage-threshold: 20
+          cover-pkg: ./src/...
+          ignore-pattern: |
+            \.pb\.go$
+            \_string\.go$
+
+      - name: Update coverage badge
+        if: github.ref_name == 'main'
+        env:
+          GH_TOKEN: ${{ secrets.COVERAGE_GIST_SECRET }}
+          GIST_ID: ${{ secrets.COVERAGE_GIST_ID }}
+        run: |
+          COVERAGE="${{ steps.coverage.outputs.coverage-pct-1dp }}"
+          COLOR="${{ steps.coverage.outputs.meets-threshold == 'true' && 'green' || 'red' }}"
+          # Create a shields.io compatible JSON
+          echo "{\"schemaVersion\": 1, \"label\": \"Go Coverage\", \"message\": \"$COVERAGE%\", \"color\": \"$COLOR\"}" > coverage.json
+          
+          # Use gh api to update the Gist. This works even if the file doesn't exist.
+          gh api -X PATCH /gists/$GIST_ID \
+            -f "files[coverage.json][content]=$(cat coverage.json)"
 
       - name: Run headless-agent (Dry Run)
         uses: ./
